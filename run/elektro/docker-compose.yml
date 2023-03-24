@@ -1,0 +1,42 @@
+version: '3.6'
+
+networks:
+  tele-net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.12-rc-management
+    #hostname: rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=teleserver
+      - RABBITMQ_DEFAULT_PASS=teleserver
+    restart: unless-stopped
+    networks:
+      tele-net:
+        ipv4_address: 172.20.0.2
+
+  mariadb:
+    image: mariadb
+    restart: unless-stopped
+    environment:
+      - MARIADB_ROOT_PASSWORD=not a very secure password
+      - MARIADB_DATABASE=teleserver
+    volumes:
+      - ./mariadb_data:/var/lib/mysql
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      tele-net:
+        ipv4_address: 172.20.0.3
+
+  adminer:
+    image: adminer
+    restart: unless-stopped
+    networks:
+      tele-net:
+        ipv4_address: 172.20.0.4

@@ -3,6 +3,7 @@ package ingest
 import (
 	"crypto/ecdsa"
 	"crypto/sha256"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,6 +65,22 @@ type Packet struct {
 	PacketHeader
 
 	Inner InnerPacket `json:"data"`
+}
+
+type AMQPPacket struct {
+	SessionID uint   `json:"sessionId"`
+	Packet    Packet `json:"packet"`
+}
+
+func init() {
+	gob.Register(EssentialsPacket{})
+	gob.Register(FullPacket{})
+
+	/*gob.RegisterName("EssentialsPacket", EssentialsPacket{})
+	gob.RegisterName("FullPacket", FullPacket{})
+	gob.RegisterName("PacketHeader", PacketHeader{})
+	gob.RegisterName("Packet", Packet{})
+	gob.RegisterName("AMQPPacket", AMQPPacket{})*/
 }
 
 func ParsePackets[T EssentialsPacket | FullPacket](body []byte, pubKey ecdsa.PublicKey) (packets []Packet, err error) {

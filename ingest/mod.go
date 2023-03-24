@@ -1,13 +1,14 @@
 package ingest
 
 import (
-	"context"
+	"bytes"
 	"crypto/ecdsa"
 	"database/sql"
-	"encoding/json"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"github.com/go-sql-driver/mysql"
+	amqp "github.com/streadway/amqp"
 	"github.com/xor-shift/teleserver/util"
 	"log"
 	"math/big"
@@ -16,7 +17,7 @@ import (
 	"sync"
 )
 
-const (
+/*const (
 	bigInsertQuery = "INSERT INTO packets (session_id, packet_order, reported_time" +
 		", battery_voltages, battery_temperatures, spent_mah, spent_mwh, curr, percent_soc" +
 		", hydro_curr, hydro_ppm, hydro_temps" +
@@ -31,7 +32,7 @@ const (
 		"?, ?, ?, ?, " +
 		"?, ?, ?, ?, ?, " +
 		"?, ?, ?, ?, ?, ?)"
-)
+)*/
 
 func advanceRNG(s [4]uint32) uint32 {
 	result := util.RotL(s[0]+s[3], 7) + s[0]
@@ -54,34 +55,39 @@ type state struct {
 	sessionID        uint
 	initialRNGVector [4]uint32
 
-	nextSequenceID uint
-	rngVector      [4]uint32
-
 	droppedPacketCt uint
 }
 
-func (state *state) advance() uint32 {
-	state.nextSequenceID++
+// honestly this is a bad idea but xoroshiro is fairly fast
+func (state *state) getNthRNG(n uint) uint32 {
+	n += 1
 
-	result := util.RotL(state.rngVector[0]+state.rngVector[3], 7) + state.rngVector[0]
+	var result uint32
 
-	t := state.rngVector[1] << 9
+	s := state.initialRNGVector
 
-	state.rngVector[2] ^= state.rngVector[0]
-	state.rngVector[3] ^= state.rngVector[1]
-	state.rngVector[1] ^= state.rngVector[2]
-	state.rngVector[0] ^= state.rngVector[3]
+	for i := uint(0); i < n; i++ {
+		result = util.RotL(s[0]+s[3], 7) + s[0]
 
-	state.rngVector[2] ^= t
+		t := s[1] << 9
 
-	state.rngVector[3] = util.RotL(state.rngVector[3], 11)
+		s[2] ^= s[0]
+		s[3] ^= s[1]
+		s[1] ^= s[2]
+		s[0] ^= s[3]
+
+		s[2] ^= t
+
+		s[3] = util.RotL(s[3], 11)
+	}
 
 	return result
 }
 
 type Ingest struct {
-	db     *sql.DB
-	pubKey ecdsa.PublicKey
+	db       *sql.DB
+	amqpConn *amqp.Connection
+	pubKey   ecdsa.PublicKey
 
 	resetToken [32]uint8
 
@@ -92,24 +98,12 @@ type Ingest struct {
 }
 
 func NewIngester(pubKey ecdsa.PublicKey) (*Ingest, error) {
-	dbConfig := mysql.Config{
-		User:                 os.Getenv("DB_USER"),
-		Passwd:               os.Getenv("DB_PASSWORD"),
-		Addr:                 os.Getenv("DB_ADDRESS"),
-		DBName:               os.Getenv("DB_NAME"),
-		Collation:            "utf8mb4_general_ci",
-		Net:                  "tcp",
-		AllowNativePasswords: true,
-	}
-
-	db, err := sql.Open("mysql", dbConfig.FormatDSN())
-	if err != nil {
-		return nil, err
-	}
+	var err error
 
 	ingester := &Ingest{
-		db:     db,
-		pubKey: pubKey,
+		db:       nil,
+		amqpConn: nil,
+		pubKey:   pubKey,
 
 		resetToken: [32]uint8{},
 
@@ -120,6 +114,24 @@ func NewIngester(pubKey ecdsa.PublicKey) (*Ingest, error) {
 	}
 
 	ingester.resetResetToken()
+
+	if ingester.amqpConn, err = amqp.Dial(os.Getenv("AMQP_URL")); err != nil {
+		return nil, err
+	}
+
+	dbConfig := mysql.Config{
+		User:                 os.Getenv("DB_USER"),
+		Passwd:               os.Getenv("DB_PASSWORD"),
+		Addr:                 os.Getenv("DB_ADDRESS"),
+		DBName:               os.Getenv("DB_NAME"),
+		Collation:            "utf8mb4_general_ci",
+		Net:                  "tcp",
+		AllowNativePasswords: true,
+	}
+
+	if ingester.db, err = sql.Open("mysql", dbConfig.FormatDSN()); err != nil {
+		return nil, err
+	}
 
 	return ingester, nil
 }
@@ -189,8 +201,8 @@ func (ingest *Ingest) ResetChallengeResponse(body string) error {
 
 	ingest.state.sessionID = 0
 	ingest.state.initialRNGVector = [4]uint32{rand.Uint32(), rand.Uint32(), rand.Uint32(), rand.Uint32()}
-	ingest.state.nextSequenceID = 1
-	ingest.state.rngVector = ingest.state.initialRNGVector
+	//ingest.state.nextSequenceID = 0
+	//ingest.state.rngVector = ingest.state.initialRNGVector
 
 	rows, err := ingest.db.Query(
 		"insert into sessions (prng, challenge, csig_r, csig_s) values (?, ?, ?, ?) returning session_id",
@@ -221,12 +233,12 @@ func (ingest *Ingest) SessionID() uint {
 	return ingest.state.sessionID
 }
 
-func (ingest *Ingest) GetCurrentRNGVector() string {
+func (ingest *Ingest) GetInitialRNGVector() string {
 	return fmt.Sprintf("%08x%08x%08x%08x",
-		ingest.state.rngVector[0],
-		ingest.state.rngVector[1],
-		ingest.state.rngVector[2],
-		ingest.state.rngVector[3])
+		ingest.state.initialRNGVector[0],
+		ingest.state.initialRNGVector[1],
+		ingest.state.initialRNGVector[2],
+		ingest.state.initialRNGVector[3])
 }
 
 func (ingest *Ingest) NewPackets(packets []Packet) error {
@@ -251,19 +263,21 @@ func (ingest *Ingest) Stop() {
 }
 
 func (ingest *Ingest) newPacket(packet *Packet) error {
-	if packet.SequenceID < ingest.state.nextSequenceID {
+	/*if packet.SequenceID < ingest.state.nextSequenceID {
 		return errors.New(fmt.Sprintf("old sequence ID (got: %d, expected (at least): %d)",
 			packet.SequenceID,
 			ingest.state.nextSequenceID))
-	}
+	}*/
 
-	seqDelta := packet.SequenceID - ingest.state.nextSequenceID + 1
+	//seqDelta := packet.SequenceID - ingest.state.nextSequenceID + 1
 	snapshot := ingest.state
 
-	expectedRNG := uint32(0)
-	for i := uint(0); i < seqDelta; i++ {
-		expectedRNG = ingest.state.advance()
-	}
+	//expectedRNG := uint32(0)
+	//for i := uint(0); i < seqDelta; i++ {
+	//	expectedRNG = ingest.state.advance()
+	//}
+
+	expectedRNG := ingest.state.getNthRNG(packet.SequenceID)
 
 	if packet.RNGState != expectedRNG {
 		ingest.state = snapshot
@@ -276,7 +290,7 @@ func (ingest *Ingest) newPacket(packet *Packet) error {
 	//state.delayAveragingWindow[state.delayWindowPointer%len(state.delayAveragingWindow)] = currentDelay
 	//state.delayWindowPointer++
 
-	ingest.state.droppedPacketCt += seqDelta - 1
+	//ingest.state.droppedPacketCt += seqDelta - 1
 	//state.lastFullPacket = *packet
 
 	//state.lastPacket = *packet
@@ -295,44 +309,37 @@ func (ingest *Ingest) newPacket(packet *Packet) error {
 	return nil
 }
 
-func (ingest *Ingest) processPacketBatch(batch []Packet) error {
+func (ingest *Ingest) processPacketBatch(batch []Packet, amqpChan *amqp.Channel, amqpExchange string) error {
 	log.Printf("%d new packets", len(batch))
-	tx, err := ingest.db.BeginTx(context.TODO(), nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(bigInsertQuery)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
 
 	for _, packet := range batch {
 		/*marshalled, _ := json.Marshal(packet.PacketData)
 		_, err := stmt.Exec(state.sessionNo, packet.SequenceID, packet.Timestamp, string(marshalled))*/
 
-		if err := ingest.newPacket(&packet); err != nil {
+		var err error
+
+		if err = ingest.newPacket(&packet); err != nil {
 			return err
 		}
 
-		inner := packet.Inner.(FullPacket)
+		var marshalledPacket bytes.Buffer
+		packetEncoder := gob.NewEncoder(&marshalledPacket)
+		if err = packetEncoder.Encode(AMQPPacket{
+			SessionID: ingest.SessionID(),
+			Packet:    packet,
+		}); err != nil {
+			return err
+		}
 
-		batteryVoltages, _ := json.Marshal(inner.BatteryVoltages[:])
-		batteryTemperatures, _ := json.Marshal(inner.BatteryTemperatures[:])
-		hydroTemperatures, _ := json.Marshal(inner.HydroTemperatures[:])
-
-		_, err := stmt.Exec(
-			ingest.state.sessionID, packet.SequenceID, packet.Timestamp,
-			string(batteryVoltages), string(batteryTemperatures), inner.SpentMilliAmpHours, inner.SpentMilliWattHours, inner.Current, inner.PercentSOC,
-			inner.HydroCurrent, inner.HydroPPM, string(hydroTemperatures),
-			inner.TemperatureSMPS, inner.TemperatureEngineDriver, inner.VCEngineDriver[0], inner.VCEngineDriver[1], inner.VCTelemetry[0], inner.VCTelemetry[1], inner.VCSMPS[0], inner.VCSMPS[1], inner.VCBMS[0], inner.VCBMS[1],
-			inner.Speed, inner.RPM, inner.VCEngine[0], inner.VCEngine[1],
-			inner.Latitude, inner.Longitude, inner.Gyro[0], inner.Gyro[1], inner.Gyro[2],
-			inner.QueueFillAmount, inner.TickCounter, inner.FreeHeap, inner.AllocCount, inner.FreeCount, inner.CPUUsage,
-		)
-		if err != nil {
+		if err = amqpChan.Publish(
+			amqpExchange,
+			"",
+			true,
+			false,
+			amqp.Publishing{
+				ContentType: "application/octet-stream",
+				Body:        marshalledPacket.Bytes(),
+			}); err != nil {
 			return err
 		}
 	}
@@ -343,9 +350,43 @@ func (ingest *Ingest) processPacketBatch(batch []Packet) error {
 func (ingest *Ingest) task() {
 	defer ingest.packetProcessorWG.Done()
 
-	// honestly, this is not a good idea but xoshiro is relatively fast...
+	var err error
+	var amqpChan *amqp.Channel
+
+	if amqpChan, err = ingest.amqpConn.Channel(); err != nil {
+		log.Fatalf("Failed to establish an amqp channel: %s", err)
+		return
+	}
+
+	defer amqpChan.Close()
+
+	if err = amqpChan.ExchangeDeclare(
+		"full_packets", // name
+		"fanout",       // type
+		true,           // durable
+		false,          // auto-deleted
+		false,          // internal
+		false,          // no-wait
+		nil,            // arguments
+	); err != nil {
+		log.Fatalf("Failed to declare an amqp exchange: %s", err)
+		return
+	}
+
+	/*amqpQueue, err := amqpChan.QueueDeclare("MessagesQueue",
+		false,
+		false,
+		false,
+		false,
+		nil)
+	if err != nil {
+		log.Fatalf("Failed to declare an amqp queue: %s", err)
+		return
+	}*/
 
 	for batch := range ingest.incomingPackets {
-		ingest.processPacketBatch(batch)
+		if err := ingest.processPacketBatch(batch, amqpChan, "full_packets"); err != nil {
+			log.Printf("Error while processing a batch of %d packets: %s", len(batch), err)
+		}
 	}
 }
