@@ -1,12 +1,5 @@
 package rng
 
-import "unsafe"
-
-func GenericRotLeft[T uint8 | uint16 | uint32 | uint64](x T, k int) T {
-	bitWidth := int(unsafe.Sizeof(x) * 8)
-	return (x << k) | (x >> (bitWidth - k))
-}
-
 func jumpImpl[T uint8 | uint16 | uint32 | uint64](state []T, table []T, permute func([]T) T) {
 	s := make([]T, len(state))
 
