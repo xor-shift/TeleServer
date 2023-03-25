@@ -1,0 +1,4 @@
+run/*/.env
+run/*/docker-compose.yml
+run/*/schema.sql
+run/*/mariadb_data

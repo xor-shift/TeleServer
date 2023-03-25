@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/go-sql-driver/mysql"
 	amqp "github.com/streadway/amqp"
+	"github.com/xor-shift/teleserver/common"
 	"github.com/xor-shift/teleserver/util"
 	"log"
 	"math/big"
@@ -16,23 +17,6 @@ import (
 	"os"
 	"sync"
 )
-
-/*const (
-	bigInsertQuery = "INSERT INTO packets (session_id, packet_order, reported_time" +
-		", battery_voltages, battery_temperatures, spent_mah, spent_mwh, curr, percent_soc" +
-		", hydro_curr, hydro_ppm, hydro_temps" +
-		", temperature_smps, temperature_engine_driver, voltage_engine_driver, current_engine_driver, voltage_telemetry, current_telemetry, voltage_smps, current_smps, voltage_bms, current_bms" +
-		", speed, rpm, voltage_engine, current_engine" +
-		", latitude, longitude, gyro_x, gyro_y, gyro_z" +
-		", queue_fill_amt, tick_counter, free_heap, alloc_count, free_count, cpu_usage" +
-		") VALUES (?, ?, FROM_UNIXTIME(?), " +
-		"?, ?, ?, ?, ?, ?, " +
-		"?, ?, ?, " +
-		"?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " +
-		"?, ?, ?, ?, " +
-		"?, ?, ?, ?, ?, " +
-		"?, ?, ?, ?, ?, ?)"
-)*/
 
 func advanceRNG(s [4]uint32) uint32 {
 	result := util.RotL(s[0]+s[3], 7) + s[0]
@@ -94,7 +78,7 @@ type Ingest struct {
 	state state
 
 	packetProcessorWG *sync.WaitGroup
-	incomingPackets   chan []Packet
+	incomingPackets   chan []common.Packet
 }
 
 func NewIngester(pubKey ecdsa.PublicKey) (*Ingest, error) {
@@ -110,7 +94,7 @@ func NewIngester(pubKey ecdsa.PublicKey) (*Ingest, error) {
 		state: state{},
 
 		packetProcessorWG: &sync.WaitGroup{},
-		incomingPackets:   make(chan []Packet, 128),
+		incomingPackets:   make(chan []common.Packet, 128),
 	}
 
 	ingester.resetResetToken()
@@ -241,7 +225,7 @@ func (ingest *Ingest) GetInitialRNGVector() string {
 		ingest.state.initialRNGVector[3])
 }
 
-func (ingest *Ingest) NewPackets(packets []Packet) error {
+func (ingest *Ingest) NewPackets(packets []common.Packet) error {
 	ingest.incomingPackets <- packets
 	return nil
 }
@@ -262,7 +246,7 @@ func (ingest *Ingest) Stop() {
 	ingest.packetProcessorWG.Wait()
 }
 
-func (ingest *Ingest) newPacket(packet *Packet) error {
+func (ingest *Ingest) newPacket(packet *common.Packet) error {
 	/*if packet.SequenceID < ingest.state.nextSequenceID {
 		return errors.New(fmt.Sprintf("old sequence ID (got: %d, expected (at least): %d)",
 			packet.SequenceID,
@@ -294,7 +278,7 @@ func (ingest *Ingest) newPacket(packet *Packet) error {
 	//state.lastFullPacket = *packet
 
 	//state.lastPacket = *packet
-	if inner, ok := packet.Inner.(FullPacket); ok {
+	if inner, ok := packet.Inner.(common.FullPacket); ok {
 		log.Printf("%d (dropped: %d) @ %d: %d, %d (%d/%d)",
 			packet.SequenceID,
 			ingest.state.droppedPacketCt,
@@ -309,7 +293,7 @@ func (ingest *Ingest) newPacket(packet *Packet) error {
 	return nil
 }
 
-func (ingest *Ingest) processPacketBatch(batch []Packet, amqpChan *amqp.Channel, amqpExchange string) error {
+func (ingest *Ingest) processPacketBatch(batch []common.Packet, amqpChan *amqp.Channel, amqpExchange string) error {
 	log.Printf("%d new packets", len(batch))
 
 	for _, packet := range batch {
@@ -324,7 +308,7 @@ func (ingest *Ingest) processPacketBatch(batch []Packet, amqpChan *amqp.Channel,
 
 		var marshalledPacket bytes.Buffer
 		packetEncoder := gob.NewEncoder(&marshalledPacket)
-		if err = packetEncoder.Encode(AMQPPacket{
+		if err = packetEncoder.Encode(common.AMQPPacket{
 			SessionID: ingest.SessionID(),
 			Packet:    packet,
 		}); err != nil {
@@ -372,17 +356,6 @@ func (ingest *Ingest) task() {
 		log.Fatalf("Failed to declare an amqp exchange: %s", err)
 		return
 	}
-
-	/*amqpQueue, err := amqpChan.QueueDeclare("MessagesQueue",
-		false,
-		false,
-		false,
-		false,
-		nil)
-	if err != nil {
-		log.Fatalf("Failed to declare an amqp queue: %s", err)
-		return
-	}*/
 
 	for batch := range ingest.incomingPackets {
 		if err := ingest.processPacketBatch(batch, amqpChan, "full_packets"); err != nil {

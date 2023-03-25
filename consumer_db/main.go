@@ -1,15 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/gob"
 	"encoding/json"
 	"github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
 	"github.com/streadway/amqp"
-	"github.com/xor-shift/teleserver/ingest"
+	"github.com/xor-shift/teleserver/common"
 	"log"
 	"os"
 )
@@ -42,65 +40,8 @@ func init() {
 func main() {
 	var err error
 
-	var amqpConn *amqp.Connection
-	var amqpChan *amqp.Channel
-	var amqpQueue amqp.Queue
-	var amqpConsumer <-chan amqp.Delivery
+	var consumer *common.AMQPConsumer
 	var db *sql.DB
-
-	if amqpConn, err = amqp.Dial(os.Getenv("AMQP_URL")); err != nil {
-		log.Fatalf("Failed to dial amqp: %s", err)
-	}
-
-	if amqpChan, err = amqpConn.Channel(); err != nil {
-		log.Fatalf("Failed to establish an amqp channel: %s", err)
-		return
-	}
-
-	defer amqpChan.Close()
-
-	if err = amqpChan.ExchangeDeclare(
-		"full_packets", // name
-		"fanout",       // type
-		true,           // durable
-		false,          // auto-deleted
-		false,          // internal
-		false,          // no-wait
-		nil,            // arguments
-	); err != nil {
-		log.Fatalf("Failed to declare an amqp exchange: %s", err)
-	}
-
-	if amqpQueue, err = amqpChan.QueueDeclare(
-		"full_packet_queue_db", // name
-		false,                  // durable
-		false,                  // delete when unused
-		true,                   // exclusive
-		false,                  // no-wait
-		nil,                    // arguments
-	); err != nil {
-		log.Fatalf("Failed to declare an amqp queue: %s", err)
-	}
-
-	if err = amqpChan.QueueBind(
-		amqpQueue.Name, // queue name
-		"",             // routing key
-		"full_packets", // exchange
-		false,
-		nil,
-	); err != nil {
-		log.Fatalf("Failed to bind an amqp queue: %s", err)
-	}
-
-	amqpConsumer, err = amqpChan.Consume(
-		amqpQueue.Name, // queue
-		"",             // consumer
-		true,           // auto-ack
-		false,          // exclusive
-		false,          // no-local
-		false,          // no-wait
-		nil,            // args
-	)
 
 	dbConfig := mysql.Config{
 		User:                 os.Getenv("DB_USER"),
@@ -116,52 +57,57 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	(func(any) {})(db)
+	if consumer, err = common.NewAMQPConsumer(
+		"consumer_db_queue",
+		"consumer_db_consumer",
+		func(delivery amqp.Delivery) error {
+			var amqpPacket common.AMQPPacket
 
-	processPacket := func(amqpPacket ingest.AMQPPacket) error {
-		tx, err := db.BeginTx(context.TODO(), nil)
-		if err != nil {
-			//log.Printf("failed writing a message to the db (BeginTx): %s", err)
-			return err
-		}
-		defer tx.Rollback()
+			if amqpPacket, err = common.ParseAMQPPacket(&delivery); err != nil {
+				log.Printf("error decoding a packet with gob: %s", err)
+			}
 
-		var stmt *sql.Stmt
-		if stmt, err = tx.Prepare(bigInsertQuery); err != nil {
-			return err
-		}
-		defer stmt.Close()
+			var tx *sql.Tx
+			tx, err = db.BeginTx(context.TODO(), nil)
+			if err != nil {
+				//log.Printf("failed writing a message to the db (BeginTx): %s", err)
+				return err
+			}
+			defer tx.Rollback()
 
-		packet := amqpPacket.Packet
-		inner := packet.Inner.(ingest.FullPacket)
+			var stmt *sql.Stmt
+			if stmt, err = tx.Prepare(bigInsertQuery); err != nil {
+				return err
+			}
+			defer stmt.Close()
 
-		batteryVoltages, _ := json.Marshal(inner.BatteryVoltages[:])
-		batteryTemperatures, _ := json.Marshal(inner.BatteryTemperatures[:])
-		hydroTemperatures, _ := json.Marshal(inner.HydroTemperatures[:])
+			packet := amqpPacket.Packet
+			inner := packet.Inner.(common.FullPacket)
 
-		if _, err = stmt.Exec(
-			amqpPacket.SessionID, packet.SequenceID, packet.Timestamp,
-			string(batteryVoltages), string(batteryTemperatures), inner.SpentMilliAmpHours, inner.SpentMilliWattHours, inner.Current, inner.PercentSOC,
-			inner.HydroCurrent, inner.HydroPPM, string(hydroTemperatures),
-			inner.TemperatureSMPS, inner.TemperatureEngineDriver, inner.VCEngineDriver[0], inner.VCEngineDriver[1], inner.VCTelemetry[0], inner.VCTelemetry[1], inner.VCSMPS[0], inner.VCSMPS[1], inner.VCBMS[0], inner.VCBMS[1],
-			inner.Speed, inner.RPM, inner.VCEngine[0], inner.VCEngine[1],
-			inner.Latitude, inner.Longitude, inner.Gyro[0], inner.Gyro[1], inner.Gyro[2],
-			inner.QueueFillAmount, inner.TickCounter, inner.FreeHeap, inner.AllocCount, inner.FreeCount, inner.CPUUsage,
-		); err != nil {
-			return err
-		}
+			batteryVoltages, _ := json.Marshal(inner.BatteryVoltages[:])
+			batteryTemperatures, _ := json.Marshal(inner.BatteryTemperatures[:])
+			hydroTemperatures, _ := json.Marshal(inner.HydroTemperatures[:])
 
-		return tx.Commit()
+			if _, err = stmt.Exec(
+				amqpPacket.SessionID, packet.SequenceID, packet.Timestamp,
+				string(batteryVoltages), string(batteryTemperatures), inner.SpentMilliAmpHours, inner.SpentMilliWattHours, inner.Current, inner.PercentSOC,
+				inner.HydroCurrent, inner.HydroPPM, string(hydroTemperatures),
+				inner.TemperatureSMPS, inner.TemperatureEngineDriver, inner.VCEngineDriver[0], inner.VCEngineDriver[1], inner.VCTelemetry[0], inner.VCTelemetry[1], inner.VCSMPS[0], inner.VCSMPS[1], inner.VCBMS[0], inner.VCBMS[1],
+				inner.Speed, inner.RPM, inner.VCEngine[0], inner.VCEngine[1],
+				inner.Latitude, inner.Longitude, inner.Gyro[0], inner.Gyro[1], inner.Gyro[2],
+				inner.QueueFillAmount, inner.TickCounter, inner.FreeHeap, inner.AllocCount, inner.FreeCount, inner.CPUUsage,
+			); err != nil {
+				return err
+			}
+
+			return tx.Commit()
+		}); err != nil {
+		log.Fatalln(err)
 	}
 
-	for delivery := range amqpConsumer {
-		buffer := bytes.NewBuffer(delivery.Body)
-		decoder := gob.NewDecoder(buffer)
-		var packet ingest.AMQPPacket
-		if err := decoder.Decode(&packet); err != nil {
-			log.Printf("error decoding a packet with gob: %s", err)
-		}
-
-		processPacket(packet)
+	if err = consumer.Start(); err != nil {
+		log.Fatalln(err)
 	}
+
+	consumer.Wait()
 }

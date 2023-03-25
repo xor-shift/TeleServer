@@ -5,17 +5,11 @@ import (
 	"crypto/elliptic"
 	"github.com/joho/godotenv"
 	"github.com/kataras/iris/v12"
+	"github.com/xor-shift/teleserver/common"
 	"github.com/xor-shift/teleserver/ingest"
 	"log"
 	"math/big"
-)
-
-// THESE WILL BE SECURELY STORED AND CHANGED WITH THE FIRST COMMIT THAT REMOVES THE HARD-CODED VALUES
-
-const (
-	PrivateKeyText = "145894e3c5f680ac2caab943f89e3d6f7feddeccc363c1c7dbc521c10d5dd6f0"
-	PublicKeyXText = "d76176dcfe0467306b28ff89bf951d41719700bd3054ebdd153133642fb5dd23"
-	PublicKeyYText = "cf52079fc23428f234f400dffeb38a4370e2d055cc5a4b98e6cf9ab4116ae8fa"
+	"os"
 )
 
 var (
@@ -42,9 +36,9 @@ func init() {
 		D:         big.NewInt(0),
 	}
 
-	privateKey.D.SetString(PrivateKeyText, 16)
-	privateKey.X.SetString(PublicKeyXText, 16)
-	privateKey.Y.SetString(PublicKeyYText, 16)
+	privateKey.D.SetString(os.Getenv("STM_SK"), 16)
+	privateKey.X.SetString(os.Getenv("STM_PK_X"), 16)
+	privateKey.Y.SetString(os.Getenv("STM_PK_Y"), 16)
 
 	app = iris.New()
 }
@@ -105,7 +99,7 @@ func main() {
 
 		//app.Logger().Printf("got a packet with body: %s", string(body))
 
-		packets, err := ingest.ParsePackets[ingest.FullPacket](body, publicKey)
+		packets, err := common.ParsePackets[common.FullPacket](body, publicKey)
 
 		if err != nil {
 			app.Logger().Printf("/packet/x error (ParsePacket): %s", err)

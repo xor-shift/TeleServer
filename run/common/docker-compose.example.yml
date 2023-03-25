@@ -14,8 +14,8 @@ services:
     image: rabbitmq:3.12-rc-management
     #hostname: rabbitmq
     environment:
-      - RABBITMQ_DEFAULT_USER=teleserver
-      - RABBITMQ_DEFAULT_PASS=teleserver
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
     restart: unless-stopped
     networks:
       tele-net:
@@ -25,7 +25,7 @@ services:
     image: mariadb
     restart: unless-stopped
     environment:
-      - MARIADB_ROOT_PASSWORD=not a very secure password
+      - MARIADB_ROOT_PASSWORD=root
       - MARIADB_DATABASE=teleserver
     volumes:
       - ./mariadb_data:/var/lib/mysql
