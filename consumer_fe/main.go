@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/joho/godotenv"
 	"github.com/kataras/iris/v12"
 	"github.com/streadway/amqp"
 	"github.com/xor-shift/teleserver/common"
 	"log"
 	"net/http"
+	"os"
 )
 
 func init() {
@@ -80,7 +82,7 @@ func main() {
 		_, _ = ctx.Text(string(jsonData))
 	})
 
-	if err = app.Listen(":8081"); err != nil {
+	if err = app.Listen(fmt.Sprintf(":%s", os.Getenv("CONSUMER_FE_PORT"))); err != nil {
 		log.Fatalln(err)
 	}
 }

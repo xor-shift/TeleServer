@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"fmt"
 	"github.com/joho/godotenv"
 	"github.com/kataras/iris/v12"
 	"github.com/xor-shift/teleserver/common"
@@ -112,7 +113,7 @@ func main() {
 		}
 	})
 
-	if err := app.Listen(":8080"); err != nil {
+	if err := app.Listen(fmt.Sprintf(":%s", os.Getenv("PRODUCER_PORT"))); err != nil {
 		log.Fatalln(err)
 	}
 }
