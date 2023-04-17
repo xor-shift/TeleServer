@@ -22,7 +22,7 @@ CREATE TABLE packets (
   percent_soc               float            NOT NULL DEFAULT 0,
   hydro_curr                float            NOT NULL DEFAULT 0,
   hydro_ppm                 float            NOT NULL DEFAULT 0,
-  hydro_temps               text             NOT NULL DEFAULT '[]',
+  hydro_temp                float            NOT NULL DEFAULT 0,
   temperature_smps          float            NOT NULL DEFAULT 0,
   temperature_engine_driver float            NOT NULL DEFAULT 0,
   voltage_engine_driver     float            NOT NULL DEFAULT 0,

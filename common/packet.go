@@ -28,9 +28,9 @@ type FullPacket struct {
 	Current             float32     `json:"amps" mapstructure:"amps"`
 	PercentSOC          float32     `json:"soc" mapstructure:"soc"`
 
-	HydroCurrent      float32    `json:"hc" mapstructure:"hc"`
-	HydroPPM          float32    `json:"hd" mapstructure:"hd"`
-	HydroTemperatures [2]float32 `json:"ht" mapstructure:"ht"`
+	HydroCurrent     float32 `json:"hc" mapstructure:"hc"`
+	HydroPPM         float32 `json:"hd" mapstructure:"hd"`
+	HydroTemperature float32 `json:"ht" mapstructure:"ht"`
 
 	TemperatureSMPS         float32    `json:"ts" mapstructure:"ts"`
 	TemperatureEngineDriver float32    `json:"ted" mapstructure:"ted"`

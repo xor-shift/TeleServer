@@ -16,7 +16,7 @@ const (
 	bigInsertQuery = "" +
 		"INSERT INTO packets (session_id, packet_order, reported_time" +
 		", battery_voltages, battery_temperatures, spent_mah, spent_mwh, curr, percent_soc" +
-		", hydro_curr, hydro_ppm, hydro_temps" +
+		", hydro_curr, hydro_ppm, hydro_temp" +
 		", temperature_smps, temperature_engine_driver, voltage_engine_driver, current_engine_driver, voltage_telemetry, current_telemetry, voltage_smps, current_smps, voltage_bms, current_bms" +
 		", speed, rpm, voltage_engine, current_engine" +
 		", latitude, longitude, gyro_x, gyro_y, gyro_z" +
@@ -86,12 +86,11 @@ func main() {
 
 			batteryVoltages, _ := json.Marshal(inner.BatteryVoltages[:])
 			batteryTemperatures, _ := json.Marshal(inner.BatteryTemperatures[:])
-			hydroTemperatures, _ := json.Marshal(inner.HydroTemperatures[:])
 
 			if _, err = stmt.Exec(
 				amqpPacket.SessionID, packet.SequenceID, packet.Timestamp,
 				string(batteryVoltages), string(batteryTemperatures), inner.SpentMilliAmpHours, inner.SpentMilliWattHours, inner.Current, inner.PercentSOC,
-				inner.HydroCurrent, inner.HydroPPM, string(hydroTemperatures),
+				inner.HydroCurrent, inner.HydroPPM, inner.HydroTemperature,
 				inner.TemperatureSMPS, inner.TemperatureEngineDriver, inner.VCEngineDriver[0], inner.VCEngineDriver[1], inner.VCTelemetry[0], inner.VCTelemetry[1], inner.VCSMPS[0], inner.VCSMPS[1], inner.VCBMS[0], inner.VCBMS[1],
 				inner.Speed, inner.RPM, inner.VCEngine[0], inner.VCEngine[1],
 				inner.Latitude, inner.Longitude, inner.Gyro[0], inner.Gyro[1], inner.Gyro[2],

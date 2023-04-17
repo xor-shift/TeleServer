@@ -12,6 +12,7 @@ import (
 	"github.com/xor-shift/teleserver/common"
 	"github.com/xor-shift/teleserver/util"
 	"log"
+	"math"
 	"math/big"
 	"math/rand"
 	"os"
@@ -279,14 +280,31 @@ func (ingest *Ingest) newPacket(packet *common.Packet) error {
 
 	//state.lastPacket = *packet
 	if inner, ok := packet.Inner.(common.FullPacket); ok {
-		log.Printf("%d (dropped: %d) @ %d: %d, %d (%d/%d)",
+		minV := math.MaxFloat64
+		maxV := -math.MaxFloat64
+		sumV := float32(0)
+
+		for _, v := range inner.BatteryVoltages {
+			minV = math.Min(minV, float64(v))
+			maxV = math.Max(maxV, float64(v))
+			sumV += v
+		}
+
+		log.Printf("%d (dropped: %d) @ %d: %d, %d (%d/%d), %f RPM, %f km/h, @ (%f, %f), %f/%f/%f V",
 			packet.SequenceID,
 			ingest.state.droppedPacketCt,
 			packet.Timestamp,
 			inner.QueueFillAmount,
 			inner.FreeHeap,
 			inner.AllocCount,
-			inner.FreeCount)
+			inner.FreeCount,
+			inner.RPM,
+			inner.Speed,
+			inner.Longitude,
+			inner.Latitude,
+			minV,
+			maxV,
+			sumV)
 		//state.lastFullPacket = *packet
 	}
 
