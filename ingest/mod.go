@@ -297,12 +297,12 @@ func (ingest *Ingest) newPacket(packet *common.Packet) error {
 
 		for _, v := range inner.BatteryTemperatures {
 			if v > 0.01 {
-				minC = math.Min(minV, float64(v))
+				minC = math.Min(minC, float64(v))
 			}
-			maxC = math.Max(maxV, float64(v))
+			maxC = math.Max(maxC, float64(v))
 		}
 
-		log.Printf("%d @ %f (fill: %d): %d (%d/%d), %f RPM, %f km/h, @ (%f, %f), %f/%f/%f V %f/%f°C (H: %f°C, %f ppm)",
+		log.Printf("%d @ %f (fill: %d): %d (%d/%d), %f RPM, %f km/h, @ (%f, %f), %f/%f/%f V %f/%f°C (H: %f°C, %f ppm) %f A",
 			packet.SequenceID,
 			float32(inner.TickCounter)/1000.,
 			inner.QueueFillAmount,
@@ -320,6 +320,7 @@ func (ingest *Ingest) newPacket(packet *common.Packet) error {
 			maxC,
 			inner.HydroTemperature,
 			inner.HydroPPM,
+			inner.Current,
 		)
 		//state.lastFullPacket = *packet
 	}
