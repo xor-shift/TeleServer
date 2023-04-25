@@ -285,15 +285,26 @@ func (ingest *Ingest) newPacket(packet *common.Packet) error {
 		sumV := float32(0)
 
 		for _, v := range inner.BatteryVoltages {
-			minV = math.Min(minV, float64(v))
+			if v > 0.01 {
+				minV = math.Min(minV, float64(v))
+			}
 			maxV = math.Max(maxV, float64(v))
 			sumV += v
 		}
 
-		log.Printf("%d (dropped: %d) @ %d: %d, %d (%d/%d), %f RPM, %f km/h, @ (%f, %f), %f/%f/%f V",
+		minC := math.MaxFloat64
+		maxC := -math.MaxFloat64
+
+		for _, v := range inner.BatteryTemperatures {
+			if v > 0.01 {
+				minC = math.Min(minV, float64(v))
+			}
+			maxC = math.Max(maxV, float64(v))
+		}
+
+		log.Printf("%d @ %f (fill: %d): %d (%d/%d), %f RPM, %f km/h, @ (%f, %f), %f/%f/%f V %f/%f°C (H: %f°C, %f ppm)",
 			packet.SequenceID,
-			ingest.state.droppedPacketCt,
-			packet.Timestamp,
+			float32(inner.TickCounter)/1000.,
 			inner.QueueFillAmount,
 			inner.FreeHeap,
 			inner.AllocCount,
@@ -304,7 +315,12 @@ func (ingest *Ingest) newPacket(packet *common.Packet) error {
 			inner.Latitude,
 			minV,
 			maxV,
-			sumV)
+			sumV,
+			minC,
+			maxC,
+			inner.HydroTemperature,
+			inner.HydroPPM,
+		)
 		//state.lastFullPacket = *packet
 	}
 

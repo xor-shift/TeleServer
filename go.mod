@@ -3,6 +3,7 @@ module github.com/xor-shift/teleserver
 go 1.19
 
 require (
+	github.com/alecthomas/kong v0.7.1
 	github.com/go-sql-driver/mysql v1.7.0
 	github.com/joho/godotenv v1.4.0
 	github.com/kataras/iris/v12 v12.1.8
@@ -26,7 +27,6 @@ require (
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/imkira/go-interpol v1.1.0 // indirect
 	github.com/iris-contrib/blackfriday v2.0.0+incompatible // indirect
-	github.com/iris-contrib/go.uuid v2.0.0+incompatible // indirect
 	github.com/iris-contrib/jade v1.1.4 // indirect
 	github.com/iris-contrib/pongo2 v0.0.1 // indirect
 	github.com/iris-contrib/schema v0.0.2 // indirect
